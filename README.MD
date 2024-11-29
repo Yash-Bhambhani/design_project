@@ -1,22 +1,37 @@
 # Virtual Programming Platform
 
 ## Overview
-The Virtual Programming Platform is designed to revolutionize programming education at our institute. It offers students and educators a collaborative, intuitive, and feature-rich environment for coding, learning, and assessment.
+The Virtual Programming Platform is a secure and efficient online environment designed for conducting programming exams and assignments. It offers features tailored to professors and students, replacing traditional platforms like Moodle.
 
 ## Features
-- **Multi-language Support**: Work with Python, Java, C++, and other popular programming languages.
-- **Real-Time Collaboration**: Collaborate with peers and instructors on the same codebase.
-- **Code Execution**: Execute and test code directly on the platform with instant results.
-- **Assignments & Assessments**: Manage, submit, and evaluate assignments seamlessly.
-- **Performance Tracking**: Get insights into individual or group progress with analytics.
-- **User-Friendly Interface**: Designed for simplicity and ease of use.
 
-## Getting Started
-1. Visit the platform at: `[INSERT PLATFORM LINK]`.
-2. Register using your institute-provided credentials.
-3. Explore the dashboard to access tutorials, projects, and assignments.
+### For Professors (Authors)
+- **Course Management**: Create and manage courses.
+- **Assignment Creation**: 
+  - Add programming assignments with:
+    - Assignment name
+    - Start and end time
+    - Questions with C code and test cases.
+    - Store file paths for question-related test case files (CSV) and correct code files (C format).
+- **Automatic Grading**: Submissions are automatically evaluated.
 
-## For Developers: Installation Guide
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/your-repo/virtual-programming-platform.git
+### For Students
+- **Assignment Portal**: 
+  - View available assignments and attempt them.
+  - Submit solutions via a secure code editor with anti-cheating measures.
+- **Grading and Feedback**: Immediate feedback on submissions.
+
+## System Highlights
+- **Secure Exam Environment**: 
+  - Anti-cheating mechanisms.
+  - Offline capability for uninterrupted access.
+- **Code Evaluation**: 
+  - Powered by a locally deployed Judge0 instance.
+  - Concurrency mechanisms for handling multiple submissions efficiently.
+
+## Tech Stack
+- **Backend**: Golang with Chi Router
+- **Frontend**: React.js
+- **Database**: PostgreSQL
+- **Code Evaluation**: Judge0 (locally deployed)
+- **Authentication**: JWT with HTTP cookies
