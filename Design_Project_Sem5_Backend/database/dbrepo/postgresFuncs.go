@@ -3,8 +3,10 @@ package dbrepo
 import (
 	"DesignProjectBackend/models/RecievedData"
 	"DesignProjectBackend/models/SentData"
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"github.com/lib/pq"
@@ -116,12 +118,12 @@ func (m *PostgresRepo) Login(email, password string) (string, bool, error) {
 	return userName, verification, nil
 }
 
-func (m *PostgresRepo) GetRoleFromUserName(name string) (string, error) {
+func (m *PostgresRepo) GetRoleFromEmail(email string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	var role string
-	query := `SELECT role FROM users WHERE username=$1`
-	row := m.DB.QueryRowContext(ctx, query, name)
+	query := `SELECT role FROM users WHERE email=$1`
+	row := m.DB.QueryRowContext(ctx, query, email)
 	err := row.Scan(&role)
 	if err != nil {
 		return "", err
@@ -129,7 +131,7 @@ func (m *PostgresRepo) GetRoleFromUserName(name string) (string, error) {
 	return role, nil
 }
 
-func (m *PostgresRepo) GetAllCoursesForStudent(name string) ([]SentData.CourseData, error) {
+func (m *PostgresRepo) GetAllCoursesForStudent(email string) ([]SentData.CourseData, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	var data []SentData.CourseData
 	defer cancel()
@@ -147,9 +149,9 @@ func (m *PostgresRepo) GetAllCoursesForStudent(name string) ([]SentData.CourseDa
 		JOIN 
 			users AS u ON c.author_id = u.user_id
 		WHERE 
-			s.username = $1;
+			s.email = $1;
 		`
-	rows, err := m.DB.QueryContext(ctx, query, name)
+	rows, err := m.DB.QueryContext(ctx, query, email)
 	if errors.Is(err, sql.ErrNoRows) {
 		fmt.Println("No courses enrolled by student")
 		err = errors.New("no courses enrolled by student")
@@ -176,7 +178,7 @@ func (m *PostgresRepo) GetAllCoursesForStudent(name string) ([]SentData.CourseDa
 	}(rows)
 	return data, nil
 }
-func (m *PostgresRepo) Get3RecentAssignments(name string) ([]SentData.AssignmentData, error) {
+func (m *PostgresRepo) Get3RecentAssignments(email string) ([]SentData.AssignmentData, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	var data []SentData.AssignmentData
 	defer cancel()
@@ -195,12 +197,12 @@ func (m *PostgresRepo) Get3RecentAssignments(name string) ([]SentData.Assignment
 	JOIN 
 		assignments AS a ON c.course_id = a.course_id
 	WHERE 
-		u.username = $1
+		u.email = $1
 	ORDER BY 
 		a.start_time DESC
 	LIMIT 3;
 	`
-	rows, err := m.DB.QueryContext(ctx, query, name)
+	rows, err := m.DB.QueryContext(ctx, query, email)
 	if errors.Is(err, sql.ErrNoRows) {
 		fmt.Println("No tasks Assigned")
 		err = errors.New("no tasks Assigned")
@@ -228,16 +230,16 @@ func (m *PostgresRepo) Get3RecentAssignments(name string) ([]SentData.Assignment
 	return data, nil
 }
 
-func (m *PostgresRepo) GetAllCoursesForAuthor(name string) ([]SentData.CourseData, error) {
+func (m *PostgresRepo) GetAllCoursesForAuthor(email string) ([]SentData.CourseData, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	var courses []SentData.CourseData
 	query := `SELECT c.course_name,c.course_code,c.course_id
 	FROM COURSES as c
 	JOIN users as u ON c.author_id = u.user_id
-	WHERE u.username = $1
+	WHERE u.email = $1
 	`
-	rows, err := m.DB.QueryContext(ctx, query, name)
+	rows, err := m.DB.QueryContext(ctx, query, email)
 	if errors.Is(err, sql.ErrNoRows) {
 		fmt.Println("No courses enrolled by professor")
 		err = errors.New("no courses enrolled by professor")
@@ -258,7 +260,7 @@ func (m *PostgresRepo) GetAllCoursesForAuthor(name string) ([]SentData.CourseDat
 	return courses, nil
 }
 
-func (m *PostgresRepo) AddCourse(username, courseCode, courseName, batchYear, branch string) error {
+func (m *PostgresRepo) AddCourse(email, courseCode, courseName, batchYear, branch string) error {
 	maxRetries := 3
 	var lastErr error
 
@@ -268,7 +270,7 @@ func (m *PostgresRepo) AddCourse(username, courseCode, courseName, batchYear, br
 			time.Sleep(time.Second * time.Duration(attempt)) // Exponential backoff
 		}
 
-		err := m.executeAddCourse(username, courseCode, courseName, batchYear, branch)
+		err := m.executeAddCourse(email, courseCode, courseName, batchYear, branch)
 		if err == nil {
 			return nil
 		}
@@ -313,7 +315,7 @@ func (m *PostgresRepo) reconnectDB() error {
 	return nil
 }
 
-func (m *PostgresRepo) executeAddCourse(username, courseCode, courseName, batchYear, branch string) error {
+func (m *PostgresRepo) executeAddCourse(email, courseCode, courseName, batchYear, branch string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
@@ -339,12 +341,12 @@ func (m *PostgresRepo) executeAddCourse(username, courseCode, courseName, batchY
 	query := `
         INSERT INTO courses (course_id, author_id, course_code, course_name, created_at, updated_at)
         VALUES (gen_random_uuid(),
-                (SELECT user_id FROM users WHERE username = $1), $2, $3,
+                (SELECT user_id FROM users WHERE email = $1), $2, $3,
                 CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING course_id`
 
 	var courseID string
-	err = tx.QueryRowContext(ctx, query, username, courseCode, courseName).Scan(&courseID)
+	err = tx.QueryRowContext(ctx, query, email, courseCode, courseName).Scan(&courseID)
 	if err != nil {
 		tx.Rollback()
 		return fmt.Errorf("failed to insert course: %w", err)
@@ -409,7 +411,7 @@ func (m *PostgresRepo) executeAddCourse(username, courseCode, courseName, batchY
 	return nil
 }
 
-func (m *PostgresRepo) GetAssignmentsForCourse(username, courseCode string) ([]SentData.AssignmentData, error) {
+func (m *PostgresRepo) GetAssignmentsForCourse(email, courseCode string) ([]SentData.AssignmentData, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
@@ -444,12 +446,12 @@ func (m *PostgresRepo) GetAssignmentsForCourse(username, courseCode string) ([]S
 	// Query for checking submission status
 	query = `SELECT COUNT(1)
              FROM assignment_grades
-             WHERE assignment_id = $1 AND student_id=(SELECT user_id from users where username = $2)`
+             WHERE assignment_id = $1 AND student_id=(SELECT user_id from users where email = $2)`
 
 	for i := range assignments {
 		assignment := assignments[i]
 		var temp int
-		row := m.DB.QueryRowContext(ctx, query, assignment.AssignmentId, username)
+		row := m.DB.QueryRowContext(ctx, query, assignment.AssignmentId, email)
 		err = row.Scan(&temp)
 		if err != nil {
 			fmt.Println("Error checking submission status:", err)
@@ -507,7 +509,7 @@ func (m *PostgresRepo) AddAssignment(assignment RecievedData.Assignment) error {
 	return nil
 }
 
-func (m *PostgresRepo) GetAllQuestionsForAssignment(assignmentId, username string) ([]SentData.StudentAssignmentDetails, error) {
+func (m *PostgresRepo) GetAllQuestionsForAssignment(assignmentId, email string) ([]SentData.StudentAssignmentDetails, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	var questions []SentData.StudentAssignmentDetails
@@ -538,11 +540,11 @@ func (m *PostgresRepo) GetAllQuestionsForAssignment(assignmentId, username strin
 	// Query for checking submission status
 	query = `SELECT COUNT(1)
              FROM submissions
-             WHERE assignment_id = $1 AND question_id = $2 AND student_id=(SELECT user_id from users where username = $3)`
+             WHERE assignment_id = $1 AND question_id = $2 AND student_id=(SELECT user_id from users where email = $3)`
 
 	for i := range questions {
 		var temp int
-		row := m.DB.QueryRowContext(ctx, query, assignmentId, questions[i].QuestionId, username)
+		row := m.DB.QueryRowContext(ctx, query, assignmentId, questions[i].QuestionId, email)
 		err = row.Scan(&temp)
 		if err != nil {
 			fmt.Println("Error checking submission status:", err)
@@ -581,7 +583,7 @@ func (m *PostgresRepo) GetTestCasesFromQuestionId(questionId string) ([]byte, er
 	return testCases, nil
 }
 
-func (m *PostgresRepo) AddSubmission(username, questionId string, codeFile []byte) error {
+func (m *PostgresRepo) AddSubmission(email, questionId string, codeFile []byte) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
@@ -589,13 +591,13 @@ func (m *PostgresRepo) AddSubmission(username, questionId string, codeFile []byt
 		INSERT INTO submissions 
 		(student_id, assignment_id, question_id, submitted_at, is_submitted, submitted_code)
 		VALUES (
-			(SELECT user_id FROM users WHERE username = $1),
+			(SELECT user_id FROM users WHERE email = $1),
 			(SELECT assignment_id FROM questions WHERE question_id = $2),
 			$2, CURRENT_TIMESTAMP, $3, $4
 		);
 	`
 
-	_, err := m.DB.ExecContext(ctx, query, username, questionId, true, codeFile)
+	_, err := m.DB.ExecContext(ctx, query, email, questionId, true, codeFile)
 	if err != nil {
 		return fmt.Errorf("error adding submission: %w", err)
 	}
@@ -603,7 +605,7 @@ func (m *PostgresRepo) AddSubmission(username, questionId string, codeFile []byt
 	return nil
 }
 
-func (m *PostgresRepo) SubmitQuestion(marks int, username, questionId string) error {
+func (m *PostgresRepo) SubmitQuestion(marks int, email, questionId string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 
@@ -613,8 +615,8 @@ func (m *PostgresRepo) SubmitQuestion(marks int, username, questionId string) er
 		VALUES (
 			(SELECT submission_id FROM submissions 
 			 WHERE question_id = $1 
-			 AND student_id = (SELECT user_id FROM users WHERE username = $2)),
-			(SELECT user_id FROM users WHERE username = $2),
+			 AND student_id = (SELECT user_id FROM users WHERE email = $2)),
+-- 			(SELECT user_id FROM users WHERE email = $2),
 			$3, CURRENT_TIMESTAMP, $4
 		);
 	`
@@ -624,7 +626,7 @@ func (m *PostgresRepo) SubmitQuestion(marks int, username, questionId string) er
 		comment = "pass"
 	}
 
-	_, err := m.DB.ExecContext(ctx, query, questionId, username, marks, comment)
+	_, err := m.DB.ExecContext(ctx, query, questionId, email, marks, comment)
 	if err != nil {
 		return fmt.Errorf("error adding student grades: %w", err)
 	}
@@ -632,14 +634,16 @@ func (m *PostgresRepo) SubmitQuestion(marks int, username, questionId string) er
 	return nil
 }
 
-func (m *PostgresRepo) GetCourseCodeAndAssignmentIdFromQuestionId(questionId string) (string, string, error) {
+func (m *PostgresRepo) GetCourseCodeAndAssignmentIdFromQuestionId(questionId string) (string, string, []string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	var courseCode string
 	var assignmentId string
+	var testcasesFile []byte
+	//var firstTestCase string
 	// SQL query to join tables and get course_code and assignment_id based on question_id
 	query := `
-        SELECT c.course_code, a.assignment_id
+        SELECT c.course_code, a.assignment_id, q.testcases_file
         FROM questions q
         JOIN assignments a ON q.assignment_id = a.assignment_id
         JOIN courses c ON a.course_id = c.course_id
@@ -650,26 +654,28 @@ func (m *PostgresRepo) GetCourseCodeAndAssignmentIdFromQuestionId(questionId str
 	row := m.DB.QueryRowContext(ctx, query, questionId)
 
 	// Scan the results into the variables
-	err := row.Scan(&courseCode, &assignmentId)
+	err := row.Scan(&courseCode, &assignmentId, &testcasesFile)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return "", "", fmt.Errorf("no course or assignment found for question id %s", questionId)
+			return "", "", []string{}, fmt.Errorf("no course or assignment found for question id %s", questionId)
 		}
-		return "", "", fmt.Errorf("error retrieving course code and assignment id: %v", err)
+		return "", "", []string{}, fmt.Errorf("error retrieving course code and assignment id: %v", err)
 	}
-
+	reader := csv.NewReader(bytes.NewReader(testcasesFile))
+	testCases, err := reader.ReadAll()
+	firstTestCase := testCases[1]
 	// Return the results
-	return courseCode, assignmentId, nil
+	return courseCode, assignmentId, firstTestCase, nil
 }
 
-func (m *PostgresRepo) SubmitAssignment(assignmentId string, username string) error {
+func (m *PostgresRepo) SubmitAssignment(assignmentId string, email string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	query := `
 				WITH student_id_cte AS (
 				SELECT user_id
 				FROM users
-				WHERE username = $1 -- Replace $1 with the username
+				WHERE email = $1 -- Replace $1 with the username
 				),
 				total_marks_cte AS (
 					SELECT 
@@ -696,7 +702,7 @@ func (m *PostgresRepo) SubmitAssignment(assignmentId string, username string) er
 				ON CONFLICT (student_id, assignment_id) 
 				DO UPDATE SET total_score = EXCLUDED.total_score, graded_at = EXCLUDED.graded_at;
 				`
-	_, err := m.DB.ExecContext(ctx, query, username, assignmentId)
+	_, err := m.DB.ExecContext(ctx, query, email, assignmentId)
 	if err != nil {
 		fmt.Println("Failed to insert into assignment_grades:", err)
 		return err
@@ -722,39 +728,85 @@ func (m *PostgresRepo) GetMarksFromQuestionId(questionId string) (int, error) {
 func (m *PostgresRepo) GetSubmissionDetailsForProfessor(assignmentId string) ([]SentData.SubmissionData, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
-	var subDetails []SentData.SubmissionData
-	query := `SELECT u.username,u.email,asg.total_score,asg.graded_at 
-			FROM assignment_grades as asg
-			JOIN users as u ON asg.student_id = u.user_id
-			WHERE asg.assignment_id = $1
-			`
+
+	query := `
+       SELECT 
+           u.username, 
+           u.email, 
+           asg.total_score, 
+           asg.graded_at, 
+           sub.submitted_code, 
+           q.question_text
+       FROM assignment_grades as asg
+       JOIN users as u ON asg.student_id = u.user_id
+       LEFT JOIN submissions as sub ON sub.assignment_id = asg.assignment_id AND sub.student_id = asg.student_id
+       JOIN questions as q ON q.question_id = sub.question_id
+       WHERE asg.assignment_id = $1
+    `
 	rows, err := m.DB.QueryContext(ctx, query, assignmentId)
 	if err != nil {
-		fmt.Println("Failed to get submission details:", err)
-		return subDetails, err
-	}
-	for rows.Next() {
-		var subData SentData.SubmissionData
-		err1 := rows.Scan(&subData.Username, &subData.RollNumber, &subData.Marks, &subData.SubmissionTime)
-		if err1 != nil {
-			fmt.Println("Failed to get submission details:", err1)
-			return nil, err1
+		if errors.Is(err, sql.ErrNoRows) {
+			return []SentData.SubmissionData{}, nil
 		}
-		subData.RollNumber = subData.RollNumber[:11]
-		subDetails = append(subDetails, subData)
+		return nil, fmt.Errorf("failed to query submission details: %w", err)
 	}
-	return subDetails, nil
+	defer rows.Close()
+
+	submissionMap := make(map[string]*SentData.SubmissionData)
+
+	for rows.Next() {
+		var username, email string
+		var totalScore int
+		var gradedAt time.Time
+		var submittedCode []byte
+		var questionText string
+
+		err := rows.Scan(&username, &email, &totalScore, &gradedAt, &submittedCode, &questionText)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan submission row: %w", err)
+		}
+
+		// Ensure the submission entry exists
+		if _, exists := submissionMap[username]; !exists {
+			submissionMap[username] = &SentData.SubmissionData{
+				Username:       username,
+				RollNumber:     email[:9], // Assuming email contains roll number
+				Marks:          totalScore,
+				SubmissionTime: gradedAt,
+				SubmittedData:  []SentData.SubmittedQuestion{},
+			}
+		}
+
+		// Add submitted question if code exists
+		if len(submittedCode) > 0 {
+			submissionMap[username].SubmittedData = append(
+				submissionMap[username].SubmittedData,
+				SentData.SubmittedQuestion{
+					QuestionText:  questionText,
+					SubmittedCode: string(submittedCode),
+				},
+			)
+		}
+	}
+
+	// Convert map to slice
+	var submissions []SentData.SubmissionData
+	for _, submission := range submissionMap {
+		submissions = append(submissions, *submission)
+	}
+
+	return submissions, nil
 }
 
-func (m *PostgresRepo) GetQuestionAttemptedStatus(username, questionId string) (bool, error) {
+func (m *PostgresRepo) GetQuestionAttemptedStatus(email, questionId string) (bool, error) {
 	var questionSubmitted int
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	query := `SELECT COUNT(1)
              FROM submissions
-             WHERE question_id = $1 AND student_id=(SELECT user_id from users where username = $2)
+             WHERE question_id = $1 AND student_id=(SELECT user_id from users where email = $2)
              `
-	row := m.DB.QueryRowContext(ctx, query, questionId, username)
+	row := m.DB.QueryRowContext(ctx, query, questionId, email)
 	err := row.Scan(&questionSubmitted)
 	if err != nil {
 		fmt.Println("Error checking submission status:", err)
@@ -763,7 +815,7 @@ func (m *PostgresRepo) GetQuestionAttemptedStatus(username, questionId string) (
 	return questionSubmitted == 1, nil
 }
 
-func (m *PostgresRepo) GetAllAssignmentsForStudents(username string) ([]SentData.AssignmentData, error) {
+func (m *PostgresRepo) GetAllAssignmentsForStudents(email string) ([]SentData.AssignmentData, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	var data []SentData.AssignmentData
 	defer cancel()
@@ -783,11 +835,11 @@ func (m *PostgresRepo) GetAllAssignmentsForStudents(username string) ([]SentData
 	JOIN 
 		assignments AS a ON c.course_id = a.course_id
 	WHERE 
-		u.username = $1
+		u.email = $1
 	ORDER BY 
 		a.start_time DESC
 	`
-	rows, err := m.DB.QueryContext(ctx, query, username)
+	rows, err := m.DB.QueryContext(ctx, query, email)
 	if errors.Is(err, sql.ErrNoRows) {
 		fmt.Println("No tasks Assigned")
 		err = errors.New("no tasks Assigned")
@@ -814,12 +866,12 @@ func (m *PostgresRepo) GetAllAssignmentsForStudents(username string) ([]SentData
 	}(rows)
 	query = `SELECT COUNT(1)
              FROM assignment_grades
-             WHERE assignment_id = $1 AND student_id=(SELECT user_id from users where username = $2)`
+             WHERE assignment_id = $1 AND student_id=(SELECT user_id from users where email = $2)`
 
 	for i := range data {
 		assignment := data[i]
 		var temp int
-		row := m.DB.QueryRowContext(ctx, query, assignment.AssignmentId, username)
+		row := m.DB.QueryRowContext(ctx, query, assignment.AssignmentId, email)
 		err = row.Scan(&temp)
 		if err != nil {
 			fmt.Println("Error checking submission status:", err)
@@ -830,7 +882,7 @@ func (m *PostgresRepo) GetAllAssignmentsForStudents(username string) ([]SentData
 	return data, nil
 }
 
-func (m *PostgresRepo) GetAllSubmittedAssignmentsForStudents(username string) ([]SentData.SubmittedAssignmentData, error) {
+func (m *PostgresRepo) GetAllSubmittedAssignmentsForStudents(email string) ([]SentData.SubmittedAssignmentData, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
 	defer cancel()
 	var assignments []SentData.SubmittedAssignmentData
@@ -851,10 +903,10 @@ func (m *PostgresRepo) GetAllSubmittedAssignmentsForStudents(username string) ([
 			JOIN 
 				assignments AS a ON c.course_id = a.course_id
 			JOIN 
-				assignment_grades AS s ON a.assignment_id = s.assignment_id
-			WHERE u.username = $1
+				assignment_grades AS s ON u.user_id = s.student_id
+			WHERE u.email = $1
 			`
-	rows, err := m.DB.QueryContext(ctx, query, username)
+	rows, err := m.DB.QueryContext(ctx, query, email)
 	if errors.Is(err, sql.ErrNoRows) {
 		fmt.Println("No submitted Assignments")
 		err = errors.New("no submitted assignments")
@@ -880,4 +932,54 @@ func (m *PostgresRepo) GetAllSubmittedAssignmentsForStudents(username string) ([
 		}
 	}(rows)
 	return assignments, nil
+}
+
+func (m *PostgresRepo) GetSubmissionDetailsForProfessorToDownload(assignmentId string) ([]SentData.DataForDownload, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	query := `
+        SELECT 
+            u.username, 
+            u.email, 
+            asg.total_score, 
+            asg.graded_at, 
+            a.assignment_name
+        FROM assignment_grades as asg
+        JOIN users as u ON asg.student_id = u.user_id
+        JOIN assignments as a ON a.assignment_id = asg.assignment_id
+        LEFT JOIN submissions as sub ON 
+            sub.assignment_id = asg.assignment_id AND 
+            sub.student_id = asg.student_id
+        WHERE asg.assignment_id = $1
+    `
+
+	rows, err := m.DB.QueryContext(ctx, query, assignmentId)
+	if err != nil {
+		return nil, fmt.Errorf("query failed: %w", err)
+	}
+	defer func(rows *sql.Rows) {
+		err1 := rows.Close()
+		if err1 != nil {
+			fmt.Println("Error closing rows:", err)
+		}
+	}(rows)
+
+	var subData []SentData.DataForDownload
+
+	for rows.Next() {
+		var studentData SentData.DataForDownload
+		if err := rows.Scan(
+			&studentData.Username,
+			&studentData.RollNumber,
+			&studentData.Marks,
+			&studentData.SubmissionTime,
+			&studentData.AssignmentName,
+		); err != nil {
+			return nil, fmt.Errorf("scan failed: %w", err)
+		}
+
+		studentData.RollNumber = studentData.RollNumber[:9]
+		subData = append(subData, studentData)
+	}
+	return subData, nil
 }
